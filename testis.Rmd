@@ -1,0 +1,302 @@
+---
+title: "R script for finding marker genes"
+output: html_notebook
+---
+
+Loading the data and normalising it
+```{r}
+testis.single.cell <- read.csv('~/Downloads/Run2_91509_gene_count_matrix_Testis_ProteinCoding.csv', 
+             row.names = 1)
+sl.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069639_mmu_sl_m.FPKM.txt',
+                     header = T)
+sc.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069641_mmu_sc_m.FPKM.txt',
+                     header = T)
+sg.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069640_mmu_sg_m.FPKM.txt',
+                     header = T)
+sd.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069642_mmu_sd_m.FPKM.txt',
+                     header = T)
+sz.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069643_mmu_sz_m.FPKM.txt',
+                     header = T)
+
+genes.common <- intersect(rownames(testis.single.cell), sl.rna$gene_id)
+testis.types.rna <- lapply(list(sc.rna, sd.rna, sg.rna, sl.rna, sz.rna), function(x.rna){
+  x <- as.character(x.rna$tracking_id)
+  ind <- match(genes.common, x)
+  x.rna <- x.rna[ind,c(4,11)]
+
+})
+names(testis.types.rna) <- c('sc', 'sd', 'sg', 'sl', 'sz')
+testis.single.cell <- testis.single.cell[genes.common, ]
+source('~/Dropbox/intern/codes/GMPR.R')
+size.gmpr <- GMPR(as.matrix(testis.single.cell))
+testis.single.cell.gmpr <- t(t(testis.single.cell)/size.gmpr$gmpr)
+
+testis.types.rna.log <-  lapply(testis.types.rna, function(testis.type)
+  {
+  testis.type[,2] <- log2(testis.type[,2] + 1)
+  df <- data.frame(testis.type[,2])
+  rownames(df) = testis.type[,1]
+  colnames(df) = 'FPQM'
+  df
+})
+
+```
+
+Next we write the function for calculating the spread and difference for each gene for
+each cell type in RNA Seq data. The spread for each gene for each cell type is calculated by computing the difference between the maximum and minimum of log expression values of cell types other than the type of interest. The difference is calculated by computing the difference between log expression values of the cell type of interest and mean of log expression values for all other cell types. Above is done for each gene for each cell.
+
+```{r}
+get.spread <- function(testis.types.rna.log)
+{ 
+  testis.type.diff <- list()
+  for(i in seq_along(testis.types.rna.log))
+  {
+    temp <- testis.types.rna.log[-i]
+    testis.type.diff[[i]] <- data.frame(diff = rep(c(-10000),nrow(testis.types.rna.log$sl)),
+                                      spread = rep(c(-10000), nrow(testis.types.rna.log$sl)))
+    for(j in seq(nrow(testis.types.rna.log$sl)))
+    {
+        vals <- sapply(temp, function(x) x[j,1])
+        #print(vals)
+        mean.vals <- mean(vals)
+        spread.vals <- max(vals) - min(vals)
+        diff <- testis.types.rna.log[[i]][j,1] - mean.vals
+        testis.type.diff[[i]]$diff[j] <-  diff
+        testis.type.diff[[i]]$spread[j] <- spread.vals
+    }
+    rownames(testis.type.diff[[i]]) = rownames(testis.types.rna.log$sl)
+  }
+  names(testis.type.diff) <- names(testis.types.rna.log)
+  return(testis.type.diff)
+}
+
+```
+
+Now we execute the above for our log transformed rna seq data
+```{r}
+testis.type.diff <- get.spread(testis.types.rna.log)
+{plot(testis.type.diff$sz$spread, testis.type.diff$sz$diff, col = '#00000050' )
+abline(0,2)
+abline(0,-2)
+abline(h = c(-2,2))}
+```
+
+
+
+For each cell type the points of interest are points above the respective lines and having absolute slopes greater than resepective threshold. For our case we have kept it at 2. get.points.beyond computes the genes following the criteria
+and genes.of.int are those genes for each cell type.
+```{r}
+get.points.beyond <- function(testis.type, slope)
+{
+  return(which(abs(testis.type$diff/testis.type$spread)  > slope & abs(testis.type$diff) > 2))
+}
+
+genes.of.int <- lapply(testis.type.diff, function(testis.type)
+{
+  get.points.beyond(testis.type, 2)
+})
+names(genes.of.int) = names(testis.type.diff)
+
+```
+
+Now once we have found the marker genes we try to label the single cell sequencing data. For that we first subtract the 
+means from the respective samples for both single cell and rna seq for each gene.
+
+```{r}
+get.means <- function(single.cell, rna.seq, genes)
+{
+  req.single.cell <- single.cell[genes, ]
+  req.rna.seq <- rna.seq[genes, ]
+  means.single.cell <- rowMeans(req.single.cell)
+  means.rna.seq <- rowMeans(req.rna.seq)
+  for(i in seq_along(genes))
+  {
+    req.single.cell[i, ] <- req.single.cell[i,] - means.single.cell[i]
+    req.rna.seq[i, ] <- req.rna.seq[i,] - means.rna.seq[i]
+  }
+  names(req.rna.seq) = names(rna.seq)
+  #print('mfk')
+  #print(nrow(req.rna.seq) == length(genes))
+  return(list(single.cell = req.single.cell, 
+              rna.seq = req.rna.seq))
+
+}
+
+testis.types.rna.log.df <- data.frame(testis.types.rna.log)
+colnames(testis.types.rna.log.df) = names(testis.types.rna)
+
+mean.data <- get.means(log2(testis.single.cell.gmpr+1), 
+                testis.types.rna.log.df, unlist(genes.of.int))
+
+```
+
+We next try to find the covariance of each cell with bulk data of each cell type. get.prod computes the product of expression for each cell and bulk data for the gene set. create.df creates the data frame which contains the sum of the above product for each cell w.r.t different cell types in bulk data
+```{r}
+create.df <- function(mean.list)
+{
+  cov.all.samples <- list()
+  cov.all.samples[['sl']] <- c()
+  cov.all.samples[['sc']] <- c()
+  cov.all.samples[['sg']] <- c()
+  cov.all.samples[['sd']] <- c()
+  cov.all.samples[['sz']] <- c()
+  for(cell.ind in seq(ncol(mean.list$single.cell)))
+  {
+    cov.genes <- get.prod(cell.ind, mean.list$single.cell, mean.list$rna.seq)  
+    sums <- apply( do.call( cbind, cov.genes ), 2, sum )
+    cov.all.samples[['sc']] <- c(cov.all.samples[['sc']], sums[[1]])
+    cov.all.samples[['sd']] <- c(cov.all.samples[['sd']], sums[[2]])
+    cov.all.samples[['sg']] <- c(cov.all.samples[['sg']], sums[[3]])
+    cov.all.samples[['sl']] <- c(cov.all.samples[['sl']], sums[[4]])
+    cov.all.samples[['sz']] <- c(cov.all.samples[['sz']], sums[[5]])
+  }
+  return(do.call(cbind, cov.all.samples))
+}
+
+get.prod <- function(cell.ind, single.cell, rna.seq)
+{
+  cov <- list()
+  for(i in seq(ncol(rna.seq)))
+  {
+    cov[[i]] <- mapply(prod, single.cell[,cell.ind], rna.seq[,i])
+  }
+  names(cov) <- colnames(rna.seq)
+  return(cov)
+}
+```
+
+Below we create the data frame.
+```{r}
+df <- create.df(mean.data)
+```
+
+Once the data.frame is created we assign lables to each cell based on the maximum value along each row. Also we compare our labels to the one assigned by Florent. 
+```{r}
+
+get.labels <- function(df)
+{
+  labels <- apply(df, 1 , function(row)
+  {
+    ind = which.max(row)
+    colnames(df)[ind]
+  })
+  return(labels)
+}
+labels <- get.labels(df)
+table(labels)
+
+labels.single.cell <- read.table(file = '~/Dropbox/intern/data/labels_testis_single_cell.txt')
+labels.single.cell$rna <- sapply(as.character(labels.single.cell$V3), function(x)
+  {
+  if(x == levels(labels.single.cell$V3)[1])
+    'sd'
+  else if(x == levels(labels.single.cell$V3)[2])
+    'sd'
+  else if(x == levels(labels.single.cell$V3)[3])
+    'sl'
+  else if(x == levels(labels.single.cell$V3)[4])
+    'sc'
+  else if(x == levels(labels.single.cell$V3)[5])
+    'sg'
+  else
+    'sz'
+})
+print("Current Mapping of our labels with Florent's data")
+sum(labels.single.cell$rna == labels)
+
+table(ours = labels, florent = labels.single.cell$rna)
+```
+
+To be more sure about our labels we look at the second maximum value of df and compare it with the maximum.
+```{r}
+max.cells <- apply(df, 1, max)
+sec.max.cells <- apply(df, 1, function(x)
+  {
+    x[order(x, decreasing = T)[2]]
+})
+{plot(max.cells, sec.max.cells)
+abline(0,1)
+abline(-50,1)}
+
+```
+
+We look at the above graph and decide a threshold of -50 such that all points below that are samples whose label we can be sure of. Below function gives us the labels based on this.
+
+```{r}
+get.sure.samples <- function(df, threshold, labels.existing)
+{
+  max.cells <- apply(df, 1, max)
+  sec.max.cells <- apply(df, 1, function(x)
+  {
+    x[order(x, decreasing = T)[2]]
+  })
+  labs.mod <- sapply(seq_along(labels.existing), function(i)
+  {
+    val = sec.max.cells[i] - max.cells[i] - threshold
+    if(val >= 0)
+      'other'
+    else
+      labels.existing[i]
+  }) 
+}
+
+labels.mod <- get.sure.samples(df, -50, labels)
+table(labels.mod)
+```
+
+Just to be sure about this method we also randomly divide the genes into sets of two and rerun the above analysis.
+
+```{r}
+get.output <- function(mean.entire.data, marker.genes, total.genes)
+{
+  pair1 <- sample(seq_along(total.genes), length(total.genes)/2)
+  pair2 <- setdiff(seq_along(total.genes), pair1)
+
+  #marker.genes.list <- lapply(genes.of.int.pair, unlist)
+  marker.genes.list <- lapply(list(pair1, pair2), function(pair)
+    {
+    intersect(marker.genes, pair)
+  })
+  
+  req.mean.data <- lapply(marker.genes.list, function(genes.list)
+    {
+    list(single.cell = mean.entire.data$single.cell[genes.list,],
+         rna.seq = mean.entire.data$rna.seq[genes.list,])
+  })
+  dfs <- lapply(req.mean.data, create.df)
+  labs <- lapply(dfs, get.labels)
+  labs.mod <- list()
+  labs.mod <- lapply(seq_along(dfs), function(i)
+      {
+      get.sure.samples(dfs[[i]], -50, labs[[i]])
+      })
+  
+  
+  return(list(labels = labs, labels.mod = labs.mod, marker.genes = marker.genes.list,
+              mean.data = req.mean.data))
+}
+
+```
+
+We first compute the mean for the entire gene set
+```{r}
+mean.entire.data <- get.means(log2(testis.single.cell.gmpr+1), 
+                              testis.types.rna.log.df, genes.common)
+                   
+```
+
+We then find labels for a random sampling of genes and then try to evaluate the
+labels we get
+```{r}
+#out1 =  get.output(mean.entire.data, unlist(genes.of.int), genes.common)
+table(out1$labels[[1]])
+table(out1$labels[[2]])
+
+sum(out1$labels[[1]] == out1$labels[[2]])
+sum(out1$labels.mod[[1]] == out1$labels.mod[[2]])
+sum(out1$labels.mod[[1]] == out1$labels[[2]])
+
+table(out1$labels.mod[[1]])
+table(out1$labels.mod[[2]])
+
+```
