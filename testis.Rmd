@@ -5,82 +5,96 @@ output:
   html_notebook: default
 ---
 
+Load packages
+
+```{r}
+suppressPackageStartupMessages({
+   library(ggplot2)
+})
+```
+
 Loading the data and normalising it
 ```{r}
 testis.single.cell <- read.csv('data/Run2_91509_gene_count_matrix_Testis_ProteinCoding.csv', 
              row.names = 1)
-sl.rna <- read.table('data/GSE43717_RAW/GSM1069639_mmu_sl_m.FPKM.txt',
-                     header = T)
-sc.rna <- read.table('data/GSE43717_RAW/GSM1069641_mmu_sc_m.FPKM.txt',
-                     header = T)
-sg.rna <- read.table('data/GSE43717_RAW/GSM1069640_mmu_sg_m.FPKM.txt',
-                     header = T)
-sd.rna <- read.table('data/GSE43717_RAW/GSM1069642_mmu_sd_m.FPKM.txt',
-                     header = T)
-sz.rna <- read.table('data/GSE43717_RAW/GSM1069643_mmu_sz_m.FPKM.txt',
-                     header = T)
 
-genes.common <- intersect(rownames(testis.single.cell), sl.rna$gene_id)
-testis.types.rna <- lapply(list(sc.rna, sd.rna, sg.rna, sl.rna, sz.rna), function(x.rna){
-  x <- as.character(x.rna$tracking_id)
-  ind <- match(genes.common, x)
-  x.rna <- x.rna[ind,c(4,11)]
+bulk.data.raw <- list( 
+   sl.rna = read.table('data/GSE43717_RAW/GSM1069639_mmu_sl_m.FPKM.txt', header = T, stringsAsFactors=F ),
+   sc.rna = read.table('data/GSE43717_RAW/GSM1069641_mmu_sc_m.FPKM.txt', header = T, stringsAsFactors=F ),
+   sg.rna = read.table('data/GSE43717_RAW/GSM1069640_mmu_sg_m.FPKM.txt', header = T, stringsAsFactors=F ),
+   sd.rna = read.table('data/GSE43717_RAW/GSM1069642_mmu_sd_m.FPKM.txt', header = T, stringsAsFactors=F ),
+   sz.rna = read.table('data/GSE43717_RAW/GSM1069643_mmu_sz_m.FPKM.txt', header = T, stringsAsFactors=F ) )
+```
 
+Some gene IDs are duplicated in the bulk data
+```{r}
+duplicated.genes <- Reduce( union, lapply( bulk.data.raw, function(l) l$gene_id[ duplicated(l$gene_id) ] ) )
+```
+
+Find common genes in all tables
+
+```{r}
+genes.common <- Reduce( intersect, lapply( bulk.data.raw, function(l) l$gene_id ), rownames(testis.single.cell) )
+head( genes.common)
+```
+
+Construct FPKM table
+
+```{r}
+testis.types.rna <- sapply( bulk.data.raw, function( l ){
+   ind <- match( genes.common, l$gene_id )
+   l$FPKM[ind]
 })
-names(testis.types.rna) <- c('sc', 'sd', 'sg', 'sl', 'sz')
-testis.single.cell <- testis.single.cell[genes.common, ]
-source('~/Dropbox/intern/codes/GMPR.R')
-size.gmpr <- GMPR(as.matrix(testis.single.cell))
+rownames( testis.types.rna ) <- genes.common
+colnames(testis.types.rna) <- sub( ".rna", "", colnames(testis.types.rna) )
+head(testis.types.rna)
+```
+
+Subset single-cell data to common genes
+
+```{r}
+testis.single.cell <- as.matrix( testis.single.cell[genes.common, ] )
+```
+
+Normalize using GMPR by Chen and Chen, 2017 (https://doi.org/10.1101/112565):
+
+```{r}
+source('GMPR.R')
+size.gmpr <- GMPR(testis.single.cell)
 testis.single.cell.gmpr <- t(t(testis.single.cell)/size.gmpr$gmpr)
+```
 
-testis.types.rna.log <-  lapply(testis.types.rna, function(testis.type)
-  {
-  testis.type[,2] <- log2(testis.type[,2] + 1)
-  df <- data.frame(testis.type[,2])
-  rownames(df) = testis.type[,1]
-  colnames(df) = 'FPQM'
-  df
-})
+Plot size factors
 
+```{r}
+plot( size.gmpr$gmpr, log="y" )
+```
+
+```{r}
+testis.types.rna.log <- log2( testis.types.rna + 1 )
 ```
 
 Next we write the function for calculating the spread and difference for each gene for
 each cell type in RNA Seq data. The spread for each gene for each cell type is calculated by computing the difference between the maximum and minimum of log expression values of cell types other than the type of interest. The difference is calculated by computing the difference between log expression values of the cell type of interest and mean of log expression values for all other cell types. Above is done for each gene for each cell.
 
 ```{r}
-get.spread <- function(testis.types.rna.log)
-{ 
-  testis.type.diff <- list()
-  for(i in seq_along(testis.types.rna.log))
-  {
-    temp <- testis.types.rna.log[-i]
-    testis.type.diff[[i]] <- data.frame(diff = rep(c(-10000),nrow(testis.types.rna.log$sl)),
-                                      spread = rep(c(-10000), nrow(testis.types.rna.log$sl)))
-    for(j in seq(nrow(testis.types.rna.log$sl)))
-    {
-        vals <- sapply(temp, function(x) x[j,1])
-        #print(vals)
-        mean.vals <- mean(vals)
-        spread.vals <- max(vals) - min(vals)
-        diff <- testis.types.rna.log[[i]][j,1] - mean.vals
-        testis.type.diff[[i]]$diff[j] <-  diff
-        testis.type.diff[[i]]$spread[j] <- spread.vals
-    }
-    rownames(testis.type.diff[[i]]) = rownames(testis.types.rna.log$sl)
-  }
-  names(testis.type.diff) <- names(testis.types.rna.log)
-  return(testis.type.diff)
-}
+testis.type.spread.diff <- 
+sapply( colnames(testis.types.rna.log), function(toi) {   # toi = type of interest
+   others <- testis.types.rna.log[ , colnames(testis.types.rna.log) != toi ]
+   data.frame( 
+      spread = apply( others, 1, function(r) max(r) - min(r) ),
+      diff =  testis.types.rna.log[,toi] - rowMeans( others ) ) }, simplify=FALSE )
 
+str(testis.type.spread.diff)
 ```
 
-Now we execute the above for our log transformed rna seq data
+
+Plot for one type
 ```{r}
-testis.type.diff <- get.spread(testis.types.rna.log)
-{plot(testis.type.diff$sz$spread, testis.type.diff$sz$diff, col = '#00000050' )
+plot( testis.type.spread.diff$sz$spread, testis.type.spread.diff$sz$diff, col = '#00000050' )
 abline(0,2)
 abline(0,-2)
-abline(h = c(-2,2))}
+abline(h = c(-2,2))
 ```
 
 
@@ -88,91 +102,84 @@ abline(h = c(-2,2))}
 For each cell type the points of interest are points above the respective lines and having absolute slopes greater than resepective threshold. For our case we have kept it at 2. get.points.beyond computes the genes following the criteria
 and genes.of.int are those genes for each cell type.
 ```{r}
-get.points.beyond <- function(testis.type, slope)
+get.points.beyond <- function(testis.type, slope)  # testis.type is one element of the list 'testis.types.spread.diff
 {
   return(which(abs(testis.type$diff/testis.type$spread)  > slope & abs(testis.type$diff) > 2))
 }
 
-genes.of.int <- lapply(testis.type.diff, function(testis.type)
-{
-  get.points.beyond(testis.type, 2)
-})
-names(genes.of.int) = names(testis.type.diff)
-
+genes.of.int <- sapply(testis.type.spread.diff, 
+   function(testis.type) {
+     get.points.beyond(testis.type, 2)
+   },
+   simplify=FALSE )
 ```
 
 Now once we have found the marker genes we try to label the single cell sequencing data. For that we first subtract the 
 means from the respective samples for both single cell and rna seq for each gene.
 
 ```{r}
-get.means <- function(single.cell, rna.seq, genes)
-{
-  req.single.cell <- single.cell[genes, ]
-  req.rna.seq <- rna.seq[genes, ]
-  means.single.cell <- rowMeans(req.single.cell)
-  means.rna.seq <- rowMeans(req.rna.seq)
-  for(i in seq_along(genes))
-  {
-    req.single.cell[i, ] <- req.single.cell[i,] - means.single.cell[i]
-    req.rna.seq[i, ] <- req.rna.seq[i,] - means.rna.seq[i]
-  }
-  names(req.rna.seq) = names(rna.seq)
-  #print('mfk')
-  #print(nrow(req.rna.seq) == length(genes))
-  return(list(single.cell = req.single.cell, 
-              rna.seq = req.rna.seq))
-
-}
-
-testis.types.rna.log.df <- data.frame(testis.types.rna.log)
-colnames(testis.types.rna.log.df) = names(testis.types.rna)
-
-mean.data <- get.means(log2(testis.single.cell.gmpr+1), 
-                testis.types.rna.log.df, unlist(genes.of.int))
-
+testis.types.rna.log.centered <- testis.types.rna.log - rowMeans( testis.types.rna.log )
+testis.single.cell.log.centered <- log2( testis.single.cell.gmpr + 1 ) - rowMeans( log2( testis.single.cell.gmpr + 1 ) )
 ```
 
-We next try to find the covariance of each cell with bulk data of each cell type. get.prod computes the product of expression for each cell and bulk data for the gene set. create.df creates the data frame which contains the sum of the above product for each cell w.r.t different cell types in bulk data
 ```{r}
-create.df <- function(mean.list)
-{
-  cov.all.samples <- list()
-  cov.all.samples[['sl']] <- c()
-  cov.all.samples[['sc']] <- c()
-  cov.all.samples[['sg']] <- c()
-  cov.all.samples[['sd']] <- c()
-  cov.all.samples[['sz']] <- c()
-  for(cell.ind in seq(ncol(mean.list$single.cell)))
-  {
-    cov.genes <- get.prod(cell.ind, mean.list$single.cell, mean.list$rna.seq)  
-    sums <- apply( do.call( cbind, cov.genes ), 2, sum )
-    cov.all.samples[['sc']] <- c(cov.all.samples[['sc']], sums[[1]])
-    cov.all.samples[['sd']] <- c(cov.all.samples[['sd']], sums[[2]])
-    cov.all.samples[['sg']] <- c(cov.all.samples[['sg']], sums[[3]])
-    cov.all.samples[['sl']] <- c(cov.all.samples[['sl']], sums[[4]])
-    cov.all.samples[['sz']] <- c(cov.all.samples[['sz']], sums[[5]])
-  }
-  return(do.call(cbind, cov.all.samples))
-}
+all.marker.genes <- unname( unlist( genes.of.int ) )
 
-get.prod <- function(cell.ind, single.cell, rna.seq)
-{
-  cov <- list()
-  for(i in seq(ncol(rna.seq)))
-  {
-    cov[[i]] <- mapply(prod, single.cell[,cell.ind], rna.seq[,i])
-  }
-  names(cov) <- colnames(rna.seq)
-  return(cov)
-}
+covariances <- t(testis.single.cell.log.centered[all.marker.genes,]) %*% testis.types.rna.log.centered[all.marker.genes,]
+head( covariances)
 ```
 
-Below we create the data frame.
+Get labels
+
 ```{r}
-df <- create.df(mean.data)
+labels <- colnames(covariances)[ apply( covariances, 1, which.max ) ]
+names(labels) <- rownames(covariances)
+head(labels)
+table( labels )
 ```
 
-Once the data.frame is created we assign lables to each cell based on the maximum value along each row. Also we compare our labels to the one assigned by Florent. 
+Plot largest to second largest
+
+```{r}
+df <- data.frame( 
+   max = apply( covariances, 1, max ),
+   second = apply( covariances, 1, function(x) sort(x,decreasing=T)[2] ),
+   label = labels )
+ggplot( df ) +
+geom_point( aes( x=max, y=second, col=label ) ) +
+geom_abline( intercept = -50 )
+```
+
+Which labels are good (to the right of the line)
+
+```{r}
+label_good <- df$max - df$second > 50 
+```
+
+Another way of getting the labels: Use only a type's own markers to calculate covariance:
+
+```{r}
+toi <- "sz"
+
+# using all marker genes, as above
+covariances1b <-
+sapply( colnames(testis.types.rna.log), function(toi)
+   testis.types.rna.log.centered[ all.marker.genes, toi ] %*% testis.single.cell.log.centered[ all.marker.genes, ] )
+stopifnot( all( abs( covariances1b - covariances ) < 1e-10 ) )  # still the same?
+
+# the same, using onlye this type's markes
+covariances2 <-
+sapply( colnames(testis.types.rna.log), function(toi)
+   testis.types.rna.log.centered[ genes.of.int[[toi]], toi ] %*% testis.single.cell.log.centered[ genes.of.int[[toi]], ] )
+
+# get new labels
+labels2 <- colnames(covariances2)[ apply( covariances2, 1, which.max ) ]
+table( labels, labels2, label_good )
+```
+
+WORKED TILL HERE
+
+
 ```{r}
 
 get.labels <- function(df)
