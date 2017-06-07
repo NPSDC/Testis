@@ -177,6 +177,25 @@ labels2 <- colnames(covariances2)[ apply( covariances2, 1, which.max ) ]
 table( labels, labels2, label_good )
 ```
 
+Another try: Use only genes as marker genes which are expressed above some threshold in at least a certain fraction of cells
+
+```{r}
+high.marker.genes <- which( 
+   rowMeans( testis.single.cell.gmpr > 10 ) > 0.5 & 
+   rownames(testis.single.cell.gmpr) %in% rownames(testis.single.cell.gmpr)[all.marker.genes] )
+
+covariances3 <- t(testis.single.cell.log.centered[high.marker.genes,]) %*%
+   testis.types.rna.log.centered[high.marker.genes,]
+
+labels3 <- colnames(covariances3)[ apply( covariances3, 1, which.max ) ]
+```
+
+
+Compare across splits
+
+```{r}
+
+```
 WORKED TILL HERE
 
 
