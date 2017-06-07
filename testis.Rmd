@@ -1,21 +1,23 @@
 ---
 title: "R script for finding marker genes"
-output: html_notebook
+output:
+  html_document: default
+  html_notebook: default
 ---
 
 Loading the data and normalising it
 ```{r}
-testis.single.cell <- read.csv('~/Downloads/Run2_91509_gene_count_matrix_Testis_ProteinCoding.csv', 
+testis.single.cell <- read.csv('data/Run2_91509_gene_count_matrix_Testis_ProteinCoding.csv', 
              row.names = 1)
-sl.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069639_mmu_sl_m.FPKM.txt',
+sl.rna <- read.table('data/GSE43717_RAW/GSM1069639_mmu_sl_m.FPKM.txt',
                      header = T)
-sc.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069641_mmu_sc_m.FPKM.txt',
+sc.rna <- read.table('data/GSE43717_RAW/GSM1069641_mmu_sc_m.FPKM.txt',
                      header = T)
-sg.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069640_mmu_sg_m.FPKM.txt',
+sg.rna <- read.table('data/GSE43717_RAW/GSM1069640_mmu_sg_m.FPKM.txt',
                      header = T)
-sd.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069642_mmu_sd_m.FPKM.txt',
+sd.rna <- read.table('data/GSE43717_RAW/GSM1069642_mmu_sd_m.FPKM.txt',
                      header = T)
-sz.rna <- read.table('~/Downloads/GSE43717_RAW/GSM1069643_mmu_sz_m.FPKM.txt',
+sz.rna <- read.table('data/GSE43717_RAW/GSM1069643_mmu_sz_m.FPKM.txt',
                      header = T)
 
 genes.common <- intersect(rownames(testis.single.cell), sl.rna$gene_id)
@@ -185,7 +187,7 @@ get.labels <- function(df)
 labels <- get.labels(df)
 table(labels)
 
-labels.single.cell <- read.table(file = '~/Dropbox/intern/data/labels_testis_single_cell.txt')
+labels.single.cell <- read.table(file = 'data/labels_testis_single_cell.txt')
 labels.single.cell$rna <- sapply(as.character(labels.single.cell$V3), function(x)
   {
   if(x == levels(labels.single.cell$V3)[1])
@@ -288,7 +290,7 @@ mean.entire.data <- get.means(log2(testis.single.cell.gmpr+1),
 We then find labels for a random sampling of genes and then try to evaluate the
 labels we get
 ```{r}
-#out1 =  get.output(mean.entire.data, unlist(genes.of.int), genes.common)
+out1 =  get.output(mean.entire.data, unlist(genes.of.int), genes.common)
 table(out1$labels[[1]])
 table(out1$labels[[2]])
 
