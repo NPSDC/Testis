@@ -78,13 +78,17 @@ Next we write the function for calculating the spread and difference for each ge
 each cell type in RNA Seq data. The spread for each gene for each cell type is calculated by computing the difference between the maximum and minimum of log expression values of cell types other than the type of interest. The difference is calculated by computing the difference between log expression values of the cell type of interest and mean of log expression values for all other cell types. Above is done for each gene for each cell.
 
 ```{r}
-testis.type.spread.diff <- 
-sapply( colnames(testis.types.rna.log), function(toi) {   # toi = type of interest
+get.spread.diff <- function(testis.types.rna.log) #testis.types.rna.log = the data frame containing the 5 types of rna
+{
+  testis.type.spread.diff <- sapply( colnames(testis.types.rna.log),
+                                     function(toi) {   # toi = type of interest
    others <- testis.types.rna.log[ , colnames(testis.types.rna.log) != toi ]
    data.frame( 
       spread = apply( others, 1, function(r) max(r) - min(r) ),
       diff =  testis.types.rna.log[,toi] - rowMeans( others ) ) }, simplify=FALSE )
-
+  return(testis.type.spread.diff)  
+}
+testis.type.spread.diff <- get.spread.diff(testis.types.rna.log)
 str(testis.type.spread.diff)
 ```
 
@@ -112,7 +116,10 @@ genes.of.int <- sapply(testis.type.spread.diff,
      get.points.beyond(testis.type, 2)
    },
    simplify=FALSE )
+
+str(genes.of.int)
 ```
+
 
 Now once we have found the marker genes we try to label the single cell sequencing data. For that we first subtract the 
 means from the respective samples for both single cell and rna seq for each gene.
@@ -120,20 +127,37 @@ means from the respective samples for both single cell and rna seq for each gene
 ```{r}
 testis.types.rna.log.centered <- testis.types.rna.log - rowMeans( testis.types.rna.log )
 testis.single.cell.log.centered <- log2( testis.single.cell.gmpr + 1 ) - rowMeans( log2( testis.single.cell.gmpr + 1 ) )
+
+centered.data <- list()
+centered.data[['bulk']] <- testis.types.rna.log.centered
+centered.data[['single.cell']] <- testis.single.cell.log.centered
 ```
 
+Marker Genes
 ```{r}
 all.marker.genes <- unname( unlist( genes.of.int ) )
+```
 
-covariances <- t(testis.single.cell.log.centered[all.marker.genes,]) %*% testis.types.rna.log.centered[all.marker.genes,]
+Getting the covariance
+```{r}
+get.covariance <- function(single.cell.data, bulk.data, genes)
+{
+  return(t(single.cell.data[genes, ]) %*% bulk.data[genes,])
+}
+covariances <- get.covariance(testis.single.cell.log.centered, testis.types.rna.log.centered, all.marker.genes)
 head( covariances)
 ```
 
 Get labels
 
 ```{r}
-labels <- colnames(covariances)[ apply( covariances, 1, which.max ) ]
-names(labels) <- rownames(covariances)
+get.labels <- function(cov.mat)
+{
+  labels <- colnames(covariances)[ apply( covariances, 1, which.max ) ]
+  names(labels) <- rownames(cov.mat)  
+  return(labels)
+}
+labels <- get.labels(covariances)
 head(labels)
 table( labels )
 ```
@@ -141,19 +165,29 @@ table( labels )
 Plot largest to second largest
 
 ```{r}
-df <- data.frame( 
-   max = apply( covariances, 1, max ),
-   second = apply( covariances, 1, function(x) sort(x,decreasing=T)[2] ),
+get.good.labels <- function(cov.mat, labels, threshold, plot = T)
+{
+  df <- data.frame( 
+   max = apply( cov.mat, 1, max ),
+   second = apply( cov.mat, 1, function(x) sort(x,decreasing=T)[2] ),
    label = labels )
-ggplot( df ) +
-geom_point( aes( x=max, y=second, col=label ) ) +
-geom_abline( intercept = -50 )
+
+if(plot)
+{
+  ggplot( df , aes( x=max, y=second, col=label )) +
+  geom_point() +
+  geom_abline( intercept = threshold )
+}
+return(df$max - df$second > -threshold )
+}
+
+
 ```
 
 Which labels are good (to the right of the line)
 
 ```{r}
-label_good <- df$max - df$second > 50 
+label_good <- get.good.labels(covariances, labels, -50)
 ```
 
 Another way of getting the labels: Use only a type's own markers to calculate covariance:
@@ -167,7 +201,7 @@ sapply( colnames(testis.types.rna.log), function(toi)
    testis.types.rna.log.centered[ all.marker.genes, toi ] %*% testis.single.cell.log.centered[ all.marker.genes, ] )
 stopifnot( all( abs( covariances1b - covariances ) < 1e-10 ) )  # still the same?
 
-# the same, using onlye this type's markes
+# the same, using onlye this type's markerss
 covariances2 <-
 sapply( colnames(testis.types.rna.log), function(toi)
    testis.types.rna.log.centered[ genes.of.int[[toi]], toi ] %*% testis.single.cell.log.centered[ genes.of.int[[toi]], ] )
@@ -177,42 +211,10 @@ labels2 <- colnames(covariances2)[ apply( covariances2, 1, which.max ) ]
 table( labels, labels2, label_good )
 ```
 
-Another try: Use only genes as marker genes which are expressed above some threshold in at least a certain fraction of cells
-
-```{r}
-high.marker.genes <- which( 
-   rowMeans( testis.single.cell.gmpr > 10 ) > 0.5 & 
-   rownames(testis.single.cell.gmpr) %in% rownames(testis.single.cell.gmpr)[all.marker.genes] )
-
-covariances3 <- t(testis.single.cell.log.centered[high.marker.genes,]) %*%
-   testis.types.rna.log.centered[high.marker.genes,]
-
-labels3 <- colnames(covariances3)[ apply( covariances3, 1, which.max ) ]
-```
-
-
-Compare across splits
-
-```{r}
-
-```
 WORKED TILL HERE
 
 
 ```{r}
-
-get.labels <- function(df)
-{
-  labels <- apply(df, 1 , function(row)
-  {
-    ind = which.max(row)
-    colnames(df)[ind]
-  })
-  return(labels)
-}
-labels <- get.labels(df)
-table(labels)
-
 labels.single.cell <- read.table(file = 'data/labels_testis_single_cell.txt')
 labels.single.cell$rna <- sapply(as.character(labels.single.cell$V3), function(x)
   {
@@ -275,31 +277,22 @@ table(labels.mod)
 Just to be sure about this method we also randomly divide the genes into sets of two and rerun the above analysis.
 
 ```{r}
-get.output <- function(mean.entire.data, marker.genes, total.genes)
+get.output <- function(centered.data, marker.genes, genes.common)
 {
-  pair1 <- sample(seq_along(total.genes), length(total.genes)/2)
-  pair2 <- setdiff(seq_along(total.genes), pair1)
+  pair1 <- sample(genes.common, length(genes.common)/2)
+  pair2 <- setdiff(genes.common, pair1)
 
-  #marker.genes.list <- lapply(genes.of.int.pair, unlist)
   marker.genes.list <- lapply(list(pair1, pair2), function(pair)
     {
-    intersect(marker.genes, pair)
+    intersect(genes.common[marker.genes], pair)
   })
-  
-  req.mean.data <- lapply(marker.genes.list, function(genes.list)
-    {
-    list(single.cell = mean.entire.data$single.cell[genes.list,],
-         rna.seq = mean.entire.data$rna.seq[genes.list,])
-  })
-  dfs <- lapply(req.mean.data, create.df)
+
+  dfs <- lapply(marker.genes.list, function(marker.genes) {
+    get.covariance(centered.data$single.cell, centered.data$bulk, marker.genes)})
+        
   labs <- lapply(dfs, get.labels)
-  labs.mod <- list()
-  labs.mod <- lapply(seq_along(dfs), function(i)
-      {
-      get.sure.samples(dfs[[i]], -50, labs[[i]])
-      })
-  
-  
+  labs.mod <- lapply(seq_along(labs), function(i) get.good.labels(dfs[[i]], labs[[i]], -50))
+
   return(list(labels = labs, labels.mod = labs.mod, marker.genes = marker.genes.list,
               mean.data = req.mean.data))
 }
@@ -316,7 +309,7 @@ mean.entire.data <- get.means(log2(testis.single.cell.gmpr+1),
 We then find labels for a random sampling of genes and then try to evaluate the
 labels we get
 ```{r}
-out1 =  get.output(mean.entire.data, unlist(genes.of.int), genes.common)
+out1 =  get.output(centered.data, unlist(genes.of.int), genes.common)
 table(out1$labels[[1]])
 table(out1$labels[[2]])
 
