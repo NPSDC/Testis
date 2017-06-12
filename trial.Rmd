@@ -1,0 +1,201 @@
+---
+title: "Trial"
+output: html_notebook
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+library(MASS)})
+```
+
+We create functions for doing mds and getting labels the traditional way given the centred data and genes
+
+```{r}
+do.mds <- function(df, genes, labels, title)
+{
+  d <- dist(t(df[genes,]) )
+  mds.single.cell <- isoMDS(d)
+  mds.single.cell <- data.frame(mds.single.cell)
+  colnames(mds.single.cell) = c('dim1', 'dim2')
+  mds.single.cell$lab <- labels
+  return(ggplot(data = mds.single.cell, aes_string(x = 'dim1', y = 'dim2',
+                                            color = 'lab' ))+
+    geom_point(size=3)+ggtitle(title)  )
+}
+
+get.understanding <- function(centered.data, mds.data, genes, title)
+{
+  cov.df <- get.covariance(centered.data$single.cell, centered.data$bulk, 
+                           genes)
+  labels <- get.labels(cov.df)
+  table(labels)
+  plot <- do.mds(mds.data, genes, labels, title)
+  return(list(cov.df = cov.df, labels = labels, plot = plot))
+}
+
+```
+
+First we try to see the MDS plots with different thresholds of slope. We also try to see what happens if we take the entire gene set.
+
+Function for getting genes for threshold
+```{r}
+get.marker.genes <- function(df.spread.diff, threshold, genes.common)
+{
+  g.o.i <- sapply(df.spread.diff, 
+                function(testis.type) {
+                  get.points.beyond(testis.type, threshold)
+                },
+                simplify=FALSE )
+#g.o.i <- unname(g.o.i)
+return(sapply(g.o.i, function(g) genes.common[g], simplify = F))
+}
+```
+
+Getting genes for different thresholds
+```{r}
+g.2 <- get.marker.genes(testis.type.spread.diff, 2, genes.common)
+g.1.5 <- get.marker.genes(testis.type.spread.diff, 1.5, genes.common)
+g.1 <- get.marker.genes(testis.type.spread.diff, 1, genes.common)
+```
+
+Below we find labels and the plots for our respective genes
+```{r}
+p.all.genes <- get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
+                                 genes.common, 'all genes')
+p.2.genes <- get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
+                              unlist(g.2), 'Threshold 2')
+p.1_5.genes <- get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
+                               unlist(g.1.5), 'Threshold 1.5')
+p.1.genes <- get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
+                               unlist(g.1), 'Threshold 1')
+
+multiplot(p.all.genes$plot, p.2.genes$plot, p.1_5.genes$plot, p.1.genes$plot,
+          cols = 2)
+
+sapply(list(p.all.genes, p.2.genes, p.1_5.genes, p.1.genes), function(p)
+  {
+  table(p$labels)
+  })
+
+```
+The thing worth noting is that from threshold 2 to 1 number of sd rise and sz fall but both still are the highest which confirms with the paper. However sl also increases which is not good.
+
+
+Another thing worth seeing was looking at overall count of the marker genes in single cell.
+```{r}
+#Genes with reasonable count in each cell
+g.reas <- apply(testis.single.cell.gmpr, 1, function(r)
+{
+  sum(r >= 10)
+})
+g.reas.length <- which(g.reas >= 40)
+
+#Genes with rowMean greater than 5
+g.mean <- which(rowMeans(testis.single.cell.gmpr) >= 10)
+
+g.high <- genes.common[intersect(g.reas.length, g.mean)]
+```
+
+Using the above and intersecting with our marker set
+```{r fig.height=30, fig.width=10}
+marker.high <- sapply(list(g.1, g.1.5, g.2), function(g) sapply(g, function(g.sub) intersect(g.sub, g.high), simplify = F), simplify = F)
+names(marker.high) <- paste('marker', c('1', '1.5', '2'), sep = '')
+p.marker.high <- sapply(seq_along(marker.high), function(i)
+  {
+  get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
+                                 unlist(marker.high[[i]]), names(marker.high)[i])
+  }, simplify = F)
+multiplot(p.marker.high[[1]]$plot, p.marker.high[[2]]$plot, p.marker.high[[3]]$plot, col =1 )
+sapply(p.marker.high, function(p.high) table(p.high$labels))
+
+```
+
+
+Having a look at Florent's Markers
+```{r}
+##Loading the data
+single.cell.markers <- read.table('~/Dropbox/intern/data/markers_single_cell.txt', header = T)
+head(single.cell.markers)
+```
+
+```{r}
+#Finding labels and doing an MDS plot using Florent's Markers
+p.flo <- get.understanding(centered.data, log2(testis.single.cell.gmpr+1),
+                      intersect(single.cell.markers$ENSEMBL, genes.common), 'Flo Markers')
+
+#Doing an MDS using Florent's labels
+p.flo.labs <- do.mds(log2(testis.single.cell.gmpr+1), 
+       intersect(single.cell.markers$ENSEMBL, genes.common),
+       labels.single.cell$rna,
+       title = 'Flo Labels')
+
+multiplot(p.flo$plot, p.flo.labs)
+```
+
+Having a look at Florent's markers in our diff vs spread plot
+```{r}
+##Function for plotting given genes across the diff vs spread plots for all the types
+get.look <- function(df.spread.diff, type, threshold, markers)
+{
+  par(mfrow = c(3, 2))
+  for(i in seq_along(df.spread.diff))
+  {
+    plot(df.spread.diff[[i]], 
+         main = names(df.spread.diff)[i])
+    abline(c(0,threshold))
+    abline(c(0,-threshold))
+    abline(h = c(-2,2))
+    inds = match(markers, 
+               rownames(df.spread.diff[[i]]))
+    points(df.spread.diff[[i]]$spread[inds],
+           df.spread.diff[[i]]$diff[inds],
+           col = 'red')
+  }
+  title(type, outer = T)  
+}
+```
+
+Plots
+```{r}
+get.look(testis.type.spread.diff, 'SZ', 2, single.cell.markers$ENSEMBL[1:10] )
+get.look(testis.type.spread.diff, 'SD', 2, single.cell.markers$ENSEMBL[11:30] )
+get.look(testis.type.spread.diff, 'SC', 2, single.cell.markers$ENSEMBL[31:40] )
+get.look(testis.type.spread.diff, 'SL', 2, single.cell.markers$ENSEMBL[41:50] )
+get.look(testis.type.spread.diff, 'SG', 2, single.cell.markers$ENSEMBL[51:60] )
+```
+
+Trying correlation as a metric to get labels
+```{r}
+get.cor.cov <- function(single.cell.data, bulk.data, genes)
+{
+  #print(genes)
+  return(cor(single.cell.data[genes, ], bulk.data[genes, ], method = 'spearman'))
+}
+
+cor.df <- get.cor.cov(centered.data$single.cell, centered.data$bulk, unlist(g.2))
+cor.df <- get.cor.cov(log2(testis.single.cell.gmpr+1), testis.types.rna.log, unlist(g.2))
+cor.labels <- get.labels(cor.df)
+table(cor.labels)
+```
+
+```{r}
+##Using only marker genes
+get.cov.using.marker.genes <- function(single.cell, bulk.data, g.o.i)
+{
+  sapply( seq_along(g.o.i), function(i)
+   (bulk.data[ g.o.i[[i]], i ] %*% single.cell[ g.o.i[[i]], ] )/length(g.o.i[[i]]), USE.NAMES = T)
+
+}
+cov.2.marker <- get.cov.using.marker.genes(centered.data$single.cell, centered.data$bulk, g.2)
+colnames(cov.2.marker) = names(g.2)
+cov.2.labels <- get.labels(cov.2.marker)
+table(cov.2.labels)
+sum(cov.2.labels == labels)
+do.mds(log2(testis.single.cell.gmpr+1), unlist(g.2), cov.2.labels, 'A')
+```
+
+
+```{r}
+
+```
