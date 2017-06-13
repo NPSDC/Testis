@@ -59,6 +59,52 @@ g.1.5 <- get.marker.genes(testis.type.spread.diff, 1.5, genes.common)
 g.1 <- get.marker.genes(testis.type.spread.diff, 1, genes.common)
 ```
 
+Multiplot function
+```{r}
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+  
+  # Make a list from the ... arguments and plotlist
+  if(length(...) == 1)
+  {
+    print('aye')
+    plots <- c(list(...), plotlist)
+  }
+  else
+    plots <- c(..., plotlist)
+  #print(plots)
+  numPlots = length(plots)
+  
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  
+  if (numPlots==1) {
+    print(plots[[1]])
+    
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+    
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+```
+
 Below we find labels and the plots for our respective genes
 ```{r}
 p.all.genes <- get.understanding(centered.data,log2(testis.single.cell.gmpr+1),
@@ -196,6 +242,97 @@ do.mds(log2(testis.single.cell.gmpr+1), unlist(g.2), cov.2.labels, 'A')
 ```
 
 
+Plotting covariance of each cell type vs each other
 ```{r}
+p.list <- list()
+#par(mfrow = c(2,5))
+k = 1
+for(i in seq(ncol(covariances)))
+{
+  if(i == ncol(covariances))
+    break()
+
+  for(j in c((i+1):ncol(covariances)))
+  {
+    df = data.frame(col1 = p.marker.1$cov.df[,i], col2 =  p.marker.1$cov.df[,j],
+                    labs = labels.rank)
+    p <- ggplot(data = df, aes_string(x = 'col1', y = 'col2',
+                          color = 'labs' ))
+      p <- p + geom_point(size=1)
+      p <- p + ggtitle(paste(colnames(p.marker.1$cov.df)[i],
+                                              colnames(p.marker.1$cov.df)[j], sep='_'))
+      p <- p + coord_fixed()
+      
+    p.list[[k]] <- p         
+    k = k + 1
+    
+  }
+}
+
+multiplot(p.list, cols = 5)
+
+```
+
+Looking at high marker genes
+```{r}
+g.reas <- apply(testis.single.cell.gmpr, 1, function(r)
+{
+  sum(r >= 100)
+})
+g.reas.length <- which(g.reas >= 50)
+
+g.marker.1 <- intersect(unlist(g.1), genes.common[g.reas.length])
+p.marker.1 <- get.understanding(centered.data, log2(testis.single.cell.gmpr+1),
+                                  g.marker.1, 'Marker 1')
+p.marker.1$plot
+length(g.marker.1)
+table(p.marker.1$labels)
+#Genes with rowMean greater than 5
+g.mean <- which(rowMeans(testis.single.cell.gmpr) >= 10)
+
+g.high <- genes.common[intersect(g.reas.length, g.mean)]
+```
+
+Using rank based approach
+```{r}
+library(geneplotter)
+multidensity(p.marker.1$cov.df)
+df.marker.rank.1 <- apply( p.marker.1$cov.df, 2, rank )
+labels.rank <- get.labels(df.marker.rank.1)
+table(labels.rank)
+```
+
+Dropouts
+```{r}
+dropout <- apply(testis.single.cell, 1, function(r)
+  {
+  mean(r == 0)
+})
+sum(dropout < 0.7)
+
+anna <- read.csv(file = '~/Dropbox/intern/data/GSE67833_Gene_expression_matrix.csv', row.names = 1)
+drop.anna <- apply(anna, 1, function(r)
+  {
+  mean(r == 0)
+})
+sum(drop.anna < 0.7)
+par(mfrow = c(1,2))
+hist(dropout)
+hist(drop.anna,
+     ylim = c(0,8000))
+multiecdf(list(drop.anna, dropout))
+
+plot( sort(drop.anna), seq_along(drop.anna), type="l", ylim=c(0,20000) )
+lines( sort(dropout), seq_along(dropout), type="l", col="red" )
+abline(h=(0:4)*10000,col="#00000060")
+
+sum(names(dropout) == genes.common) == length(genes.common)
+abline(v = dropout[match(intersect(single.cell.markers$ENSEMBL, genes.common),
+      genes.common)], col="#0000FF30")
+
+sum(labels.single.cell$V1 == colnames(testis.single.cell)) == ncol(testis.single.cell)
+df.drop.samples <- data.frame(drop.samples = apply(testis.single.cell, 2, function(col) mean(col == 0 )),
+  cluster = labels.single.cell$rna, row.names = colnames(testis.single.cell))
+boxplot(data = df.drop.samples, drop.samples~cluster)
 
 ```
