@@ -310,7 +310,7 @@ dropout <- apply(testis.single.cell, 1, function(r)
 })
 sum(dropout < 0.7)
 
-anna <- read.csv(file = '~/Dropbox/intern/data/GSE67833_Gene_expression_matrix.csv', row.names = 1)
+anna <- read.csv(file = 'data/GSE67833_Gene_expression_matrix.csv', row.names = 1)
 drop.anna <- apply(anna, 1, function(r)
   {
   mean(r == 0)
