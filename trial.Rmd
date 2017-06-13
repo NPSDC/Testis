@@ -320,6 +320,7 @@ par(mfrow = c(1,2))
 hist(dropout)
 hist(drop.anna,
      ylim = c(0,8000))
+library(geneplotter)
 multiecdf(list(drop.anna, dropout))
 
 plot( sort(drop.anna), seq_along(drop.anna), type="l", ylim=c(0,20000) )
@@ -330,6 +331,7 @@ sum(names(dropout) == genes.common) == length(genes.common)
 abline(v = dropout[match(intersect(single.cell.markers$ENSEMBL, genes.common),
       genes.common)], col="#0000FF30")
 
+single.cell.markers <- read.table('data/markers_single_cell.txt', header = T)
 sum(labels.single.cell$V1 == colnames(testis.single.cell)) == ncol(testis.single.cell)
 df.drop.samples <- data.frame(drop.samples = apply(testis.single.cell, 2, function(col) mean(col == 0 )),
   cluster = labels.single.cell$rna, row.names = colnames(testis.single.cell))
